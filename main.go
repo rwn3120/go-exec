@@ -1,0 +1,3 @@
+package gojobs
+
+func main() {}
