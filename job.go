@@ -23,6 +23,6 @@ func (gr *SimpleResult) CorrelationId() string {
     return gr.id
 }
 
-func (gr *SimpleResult) Err() error {
+func (gr *SimpleResult) Error() error {
     return gr.error
 }
