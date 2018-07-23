@@ -102,7 +102,7 @@ func (m *JobManager) Destroy() {
 func (m *JobManager) process(job Job, callback func(result JobResult)) {
     for {
         select {
-        case result := <-*job.resultChannel():
+        case result := <-*job.ResultChannel():
             go func() {
                 m.logger.Trace("Calling callback function")
                 defer m.logger.Trace("Callback function done")
@@ -110,7 +110,7 @@ func (m *JobManager) process(job Job, callback func(result JobResult)) {
             }()
             return
         case <-time.After(m.configuration.CallbackRetryInterval):
-            m.logger.Trace("Waiting for result of job %s", job.correlationId())
+            m.logger.Trace("Waiting for result of job %s", job.CorrelationId())
         }
     }
 }
@@ -119,14 +119,14 @@ func (m *JobManager) PerformWithCallback(job Job, callback func(result JobResult
     for {
         select {
         case m.jobs <- job:
-            if job.resultChannel() != nil {
+            if job.ResultChannel() != nil {
                 m.process(job, callback)
             } else {
-                m.logger.Trace("Job %s has no result channel", job.correlationId())
+                m.logger.Trace("Job %s has no result channel", job.CorrelationId())
             }
             return nil
         case <-time.After(m.configuration.JobPullInterval):
-            m.logger.Trace("Waiting for free worker for job %s", job.correlationId())
+            m.logger.Trace("Waiting for free worker for job %s", job.CorrelationId())
         }
     }
 }
@@ -134,12 +134,12 @@ func (m *JobManager) PerformWithCallback(job Job, callback func(result JobResult
 func (m *JobManager) Perform(job Job) JobResult {
     jobResult := make(chan JobResult)
     callback := func(result JobResult) {
-        m.logger.Trace("Internal callback done, passing result of job %s to manager", result.correlationId())
+        m.logger.Trace("Internal callback done, passing result of job %s to manager", result.CorrelationId())
         jobResult <- result
     }
     m.PerformWithCallback(job, callback)
-    m.logger.Trace("Waiting for result of job %s", job.correlationId())
+    m.logger.Trace("Waiting for result of job %s", job.CorrelationId())
     result := <- jobResult
-    m.logger.Trace("Received result of job %s", job.correlationId())
+    m.logger.Trace("Received result of job %s", job.CorrelationId())
     return result
 }

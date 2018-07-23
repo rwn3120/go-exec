@@ -90,7 +90,7 @@ runLoop:
         case job, more := <-w.jobs:
             if more {
                 jobCounter++
-                w.logger.Trace("Received job %v #%06d", job.correlationId(), jobCounter)
+                w.logger.Trace("Received job %v #%06d", job.CorrelationId(), jobCounter)
                 w.jobHandler.Handle(job)
             } else {
                 w.logger.Trace("Received all jobs")
