@@ -17,26 +17,26 @@ const (
 )
 
 type Worker struct {
-    uuid       string
-    jobs       chan Job
-    signals    chan Signal
-    done       chan bool
-    status     Status
-    jobHandler JobHandler
-    logger     *gologger.Logger
+    uuid    string
+    jobs    chan Job
+    signals chan Signal
+    done    chan bool
+    status  Status
+    handler Handler
+    logger  *gologger.Logger
 }
 
-func createWorker(uuid string, loggerConfiguration *gologger.LoggerConfiguration, jobs chan Job, jobHandlerBuilder JobHandlerFactory) *Worker {
-    goconf.Check(loggerConfiguration)
+func createWorker(uuid string, logging *gologger.Configuration, jobs chan Job, factory Factory) *Worker {
+    goconf.Check(logging)
 
     worker := &Worker{
-        uuid:       uuid,
-        jobs:       jobs,
-        signals:    make(chan Signal, 1),
-        done:       make(chan bool, 1),
-        status:     Alive,
-        jobHandler: jobHandlerBuilder.JobHandler(uuid),
-        logger:     gologger.NewLogger(uuid, loggerConfiguration)}
+        uuid:    uuid,
+        jobs:    jobs,
+        signals: make(chan Signal, 1),
+        done:    make(chan bool, 1),
+        status:  Alive,
+        handler: factory.Handler(uuid),
+        logger:  gologger.NewLogger(uuid, logging)}
     go worker.run()
     return worker
 }
@@ -56,7 +56,7 @@ func (w *Worker) wait() bool {
 
 func (w *Worker) die() {
     if w.isAlive() {
-        defer w.jobHandler.Destroy()
+        defer w.handler.Destroy()
         w.logger.Trace("Dying...")
         <-time.After(time.Second)
         w.status = Zombie
@@ -68,12 +68,12 @@ func (w *Worker) die() {
 
 func (w *Worker) run() {
     defer w.die()
-    if err:= w.jobHandler.Initialize(); err != nil {
+    if err := w.handler.Initialize(); err != nil {
         w.logger.Error("Could not initialize worker: %s", err.Error())
     }
 
 runLoop:
-    for jobCounter := 0; w.isAlive(); {
+    for counter := 0; w.isAlive(); {
         select {
         // process signals
         case signal := <-w.signals:
@@ -89,15 +89,15 @@ runLoop:
             // process jobs
         case job, more := <-w.jobs:
             if more {
-                jobCounter++
-                w.logger.Trace("Received job %v #%06d", job.CorrelationId(), jobCounter)
-                w.jobHandler.Handle(job)
+                counter++
+                w.logger.Trace("Received job %v #%06d", job.CorrelationId(), counter)
+                w.handler.Handle(job)
             } else {
                 w.logger.Trace("Received all jobs")
                 break runLoop
             }
-            jobCounter++
-        case <-time.After(w.jobHandler.HeartBeat()):
+            counter++
+        case <-time.After(w.handler.HeartBeat()):
             w.logger.Trace("Nothing to do")
         }
     }

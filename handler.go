@@ -2,7 +2,7 @@ package gojobs
 
 import "time"
 
-type JobHandler interface {
+type Handler interface {
     Initialize() error
 
     Destroy()
@@ -10,8 +10,4 @@ type JobHandler interface {
     HeartBeat() time.Duration
 
     Handle(task Job)
-}
-
-type JobHandlerFactory interface {
-    JobHandler(uuid string) JobHandler
 }

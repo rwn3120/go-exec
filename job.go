@@ -2,27 +2,27 @@ package gojobs
 
 type Job interface {
     CorrelationId() string
-    ResultChannel() *chan JobResult
+    ResultChannel() *chan Result
 }
 
-type JobResult interface {
+type Result interface {
     CorrelationId() string
-    Err() error
+    Error() error
 }
 
-type SimpleJobResult struct {
+type SimpleResult struct {
     id    string
     error error
 }
 
-func CreateJobResult(id string, err error) *SimpleJobResult {
-    return &SimpleJobResult{id, err}
+func NewResult(id string, err error) *SimpleResult {
+    return &SimpleResult{id, err}
 }
 
-func (gr *SimpleJobResult) CorrelationId() string {
+func (gr *SimpleResult) CorrelationId() string {
     return gr.id
 }
 
-func (gr *SimpleJobResult) Err() error {
+func (gr *SimpleResult) Err() error {
     return gr.error
 }

@@ -11,21 +11,21 @@ const (
     MinimumPullInterval = time.Millisecond
 )
 
-type JobManagerConfiguration struct {
+type Configuration struct {
     WorkersCount          int
     JobPullInterval       time.Duration
     CallbackRetryInterval time.Duration
-    Logger                *gologger.LoggerConfiguration
+    Logger                *gologger.Configuration
 }
 
-func (c *JobManagerConfiguration) Validate() *[]string {
+func (c *Configuration) Validate() *[]string {
     var errorList []string
 
     if c.WorkersCount <= 0 {
-        errorList = append(errorList, "JobManagerConfiguration: Workers count must be larger than 0")
+        errorList = append(errorList, "Configuration: Workers count must be larger than 0")
     }
     if c.JobPullInterval < MinimumPullInterval {
-        errorList = append(errorList, fmt.Sprintf("JobManagerConfiguration: Job pull interval must be larger or equeal to %v", MinimumPullInterval))
+        errorList = append(errorList, fmt.Sprintf("Configuration: Job pull interval must be larger or equeal to %v", MinimumPullInterval))
     }
     if errorsCount := len(errorList); errorsCount > 0 {
         return &errorList
@@ -39,18 +39,18 @@ func (c *JobManagerConfiguration) Validate() *[]string {
     return nil
 }
 
-type JobManager struct {
+type Manager struct {
     name              string
-    configuration     *JobManagerConfiguration
+    configuration     *Configuration
     jobs              chan Job
     workers           map[string]*Worker
     logger            *gologger.Logger
 }
 
-func CreateJobManager(name string, configuration *JobManagerConfiguration, jobHandlerBuilder JobHandlerFactory) *JobManager {
+func New(name string, configuration *Configuration, factory Factory) *Manager {
     goconf.Check(configuration)
 
-    manager := &JobManager{
+    manager := &Manager{
         name:              name,
         configuration:     configuration,
         jobs:              make(chan Job, configuration.WorkersCount),
@@ -65,14 +65,14 @@ func CreateJobManager(name string, configuration *JobManagerConfiguration, jobHa
             workerUuid,
             manager.configuration.Logger,
             manager.jobs,
-            jobHandlerBuilder)
+            factory)
         manager.logger.Trace("Registering worker %s", workerUuid)
         manager.workers[worker.uuid] = worker
     }
     return manager
 }
 
-func (m *JobManager) Destroy() {
+func (m *Manager) Destroy() {
     unregisteredWorkers := make(chan string, len(m.workers))
 
     workersCount := len(m.workers)
@@ -99,7 +99,7 @@ func (m *JobManager) Destroy() {
     m.logger.Trace("Destroyed")
 }
 
-func (m *JobManager) process(job Job, callback func(result JobResult)) {
+func (m *Manager) process(job Job, callback func(result Result)) {
     for {
         select {
         case result := <-*job.ResultChannel():
@@ -115,7 +115,7 @@ func (m *JobManager) process(job Job, callback func(result JobResult)) {
     }
 }
 
-func (m *JobManager) PerformWithCallback(job Job, callback func(result JobResult)) JobResult {
+func (m *Manager) PerformWithCallback(job Job, callback func(result Result)) Result {
     for {
         select {
         case m.jobs <- job:
@@ -131,9 +131,9 @@ func (m *JobManager) PerformWithCallback(job Job, callback func(result JobResult
     }
 }
 
-func (m *JobManager) Perform(job Job) JobResult {
-    jobResult := make(chan JobResult)
-    callback := func(result JobResult) {
+func (m *Manager) Perform(job Job) Result {
+    jobResult := make(chan Result)
+    callback := func(result Result) {
         m.logger.Trace("Internal callback done, passing result of job %s to manager", result.CorrelationId())
         jobResult <- result
     }
