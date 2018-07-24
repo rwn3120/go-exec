@@ -1,4 +1,4 @@
-package gojobs
+package exec
 
 import "time"
 
@@ -9,5 +9,5 @@ type Handler interface {
 
     HeartBeat() time.Duration
 
-    Handle(task Job)
+    Handle(job Job)
 }

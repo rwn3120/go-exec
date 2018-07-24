@@ -1,9 +1,9 @@
-package gojobs
+package exec
 
 import (
     "time"
-    "github.com/rwn3120/gologger"
-    "github.com/rwn3120/goconf"
+    "github.com/rwn3120/go-logger"
+    "github.com/rwn3120/go-conf"
 )
 
 type Status int
@@ -23,11 +23,11 @@ type Worker struct {
     done    chan bool
     status  Status
     handler Handler
-    logger  *gologger.Logger
+    logger  *logger.Logger
 }
 
-func createWorker(uuid string, logging *gologger.Configuration, jobs chan Job, factory Factory) *Worker {
-    goconf.Check(logging)
+func createWorker(uuid string, logging *logger.Configuration, jobs chan Job, factory Factory) *Worker {
+    conf.Check(logging)
 
     worker := &Worker{
         uuid:    uuid,
@@ -36,7 +36,7 @@ func createWorker(uuid string, logging *gologger.Configuration, jobs chan Job, f
         done:    make(chan bool, 1),
         status:  Alive,
         handler: factory.Handler(uuid),
-        logger:  gologger.NewLogger(uuid, logging)}
+        logger:  logger.NewLogger(uuid, logging)}
     go worker.run()
     return worker
 }

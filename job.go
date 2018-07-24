@@ -1,4 +1,4 @@
-package gojobs
+package exec
 
 type Job interface {
     CorrelationId() string
@@ -10,19 +10,19 @@ type Result interface {
     Error() error
 }
 
-type SimpleResult struct {
+type GenericResult struct {
     id    string
     error error
 }
 
-func NewResult(id string, err error) *SimpleResult {
-    return &SimpleResult{id, err}
+func NewResult(id string, err error) *GenericResult {
+    return &GenericResult{id, err}
 }
 
-func (gr *SimpleResult) CorrelationId() string {
+func (gr *GenericResult) CorrelationId() string {
     return gr.id
 }
 
-func (gr *SimpleResult) Error() error {
+func (gr *GenericResult) Error() error {
     return gr.error
 }

@@ -1,3 +1,3 @@
-package gojobs
+package exec
 
 func main() {}
