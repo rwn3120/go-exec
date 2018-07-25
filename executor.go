@@ -55,7 +55,7 @@ func New(name string, configuration *Configuration, factory Factory) *Executor {
         configuration:     configuration,
         jobs:              make(chan Job, configuration.WorkersCount),
         workers:           make(map[string]*Worker, configuration.WorkersCount),
-        logger:            logger.NewLogger(name + "-backend", configuration.Logger)}
+        logger:            logger.New(name + "-backend", configuration.Logger)}
 
     // start workers
     for index := 0; index < configuration.WorkersCount; index++ {

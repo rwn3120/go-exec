@@ -36,7 +36,7 @@ func createWorker(uuid string, logging *logger.Configuration, jobs chan Job, fac
         done:    make(chan bool, 1),
         status:  Alive,
         handler: factory.Handler(uuid),
-        logger:  logger.NewLogger(uuid, logging)}
+        logger:  logger.New(uuid, logging)}
     go worker.run()
     return worker
 }
