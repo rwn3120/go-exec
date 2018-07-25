@@ -8,14 +8,16 @@ import (
 )
 
 const (
-    MinimumPullInterval = time.Millisecond
+    MinimumRegistrationTimeout = 100 * time.Millisecond
+    MinimumWorkerHeartbeat     = 500 * time.Millisecond
 )
 
 type Configuration struct {
-    WorkersCount          int
-    JobPullInterval       time.Duration
-    CallbackRetryInterval time.Duration
-    Logger                *logger.Configuration
+    WorkersCount        int
+    WorkerHeartbeat     time.Duration
+    RegistrationTimeout time.Duration
+    CallbackHeartbeat   time.Duration
+    Logger              *logger.Configuration
 }
 
 func (c *Configuration) Validate() *[]string {
@@ -24,8 +26,11 @@ func (c *Configuration) Validate() *[]string {
     if c.WorkersCount <= 0 {
         errorList = append(errorList, "Configuration: Workers count must be larger than 0")
     }
-    if c.JobPullInterval < MinimumPullInterval {
-        errorList = append(errorList, fmt.Sprintf("Configuration: Job pull interval must be larger or equeal to %v", MinimumPullInterval))
+    if c.RegistrationTimeout < MinimumRegistrationTimeout {
+        errorList = append(errorList, fmt.Sprintf("Configuration: Registration timeout must be larger or equeal to %v", MinimumRegistrationTimeout))
+    }
+    if c.WorkerHeartbeat < MinimumWorkerHeartbeat {
+        errorList = append(errorList, fmt.Sprintf("Configuration: Worker heartbeat must be larger or equeal to %v", MinimumWorkerHeartbeat))
     }
     if errorsCount := len(errorList); errorsCount > 0 {
         return &errorList
@@ -40,29 +45,30 @@ func (c *Configuration) Validate() *[]string {
 }
 
 type Executor struct {
-    name              string
-    configuration     *Configuration
-    jobs              chan Job
-    workers           map[string]*Worker
-    logger            *logger.Logger
+    name          string
+    configuration *Configuration
+    jobs          chan *job
+    workers       map[string]*Worker
+    logger        *logger.Logger
 }
 
 func New(name string, configuration *Configuration, factory Factory) *Executor {
     conf.Check(configuration)
 
     executor := &Executor{
-        name:              name,
-        configuration:     configuration,
-        jobs:              make(chan Job, configuration.WorkersCount),
-        workers:           make(map[string]*Worker, configuration.WorkersCount),
-        logger:            logger.New(name + "-backend", configuration.Logger)}
+        name:          name,
+        configuration: configuration,
+        jobs:          make(chan *job, configuration.WorkersCount),
+        workers:       make(map[string]*Worker, configuration.WorkersCount),
+        logger:        logger.New(name+"-executor", configuration.Logger)}
 
     // start workers
-    for index := 0; index < configuration.WorkersCount; index++ {
+    for index := 0; index < executor.configuration.WorkersCount; index++ {
         workerUuid := fmt.Sprintf("%s-worker-%d", name, index+1)
-        executor.logger.Trace("Creating %s", workerUuid)
-        worker := createWorker(
+        executor.logger.Trace("Creating worker %s (%d/%d)", workerUuid, index+1, configuration.WorkersCount)
+        worker := newWorker(
             workerUuid,
+            executor.configuration.WorkerHeartbeat,
             executor.configuration.Logger,
             executor.jobs,
             factory)
@@ -85,7 +91,6 @@ func (e *Executor) Destroy() {
             e.logger.Trace("Waiting for worker's %s death...", worker.uuid)
             worker.wait()
             e.logger.Trace("Unregistering worker %s (he is gone)", worker.uuid)
-            delete(e.workers, worker.uuid)
             unregisteredWorkers <- worker.uuid
         }(worker)
     }
@@ -93,53 +98,96 @@ func (e *Executor) Destroy() {
     for i := 0; i < workersCount; i++ {
         unregisteredWorkerUUid := <-unregisteredWorkers
         e.logger.Trace("Worker %s unregistered", unregisteredWorkerUUid)
+        delete(e.workers, unregisteredWorkerUUid)
     }
     e.logger.Trace("Closing jobs channel")
     close(e.jobs)
     e.logger.Trace("Destroyed")
 }
 
-func (e *Executor) exec(job Job, callback func(result Result)) {
+func minExpiration(first time.Duration, second time.Duration) time.Duration {
+    if first == NeverExpires {
+        return second
+    }
+    if second == NeverExpires {
+        return first
+    }
+
+    if first < second {
+        return first
+    }
+    return second
+}
+
+func (e *Executor) processResult(job *job, callbacks ...func(result Result)) {
     for {
         select {
-        case result := <-*job.ResultChannel():
+        case result := <-job.result:
+            if result.Error() == nil {
+                e.logger.Trace("Job %s done. Calling %d callbacks", result.CorrelationId(), len(callbacks))
+            } else {
+                e.logger.Warn("Job %s failed: %s. Calling %d callbacks", result.CorrelationId(), result.Error(), len(callbacks))
+            }
             go func() {
-                e.logger.Trace("Calling callback function")
-                defer e.logger.Trace("Callback function done")
-                callback(result)
+                for index, callback := range callbacks {
+                    if callback != nil {
+                        e.logger.Trace("Running callback function (%d/%d)", index+1, len(callbacks))
+                        callback(result)
+                    } else {
+                        e.logger.Trace("Skipping callback function (%d/%d)", index+1, len(callbacks))
+                    }
+                }
             }()
             return
-        case <-time.After(e.configuration.CallbackRetryInterval):
-            e.logger.Trace("Waiting for result of job %s", job.CorrelationId())
+        case <-time.After(e.configuration.CallbackHeartbeat):
+            e.logger.Trace("Waiting for result of job %s", job.userJob.CorrelationId())
         }
     }
 }
 
-func (e *Executor) ExecWithCallback(job Job, callback func(result Result)) Result {
-    for {
+func (e *Executor) registerAndFire(job *job, callbacks ...func(result Result)) {
+    e.logger.Trace("Registering job %s with %d callbacks", job.userJob.CorrelationId(), len(callbacks))
+    registeredAt := time.Now()
+    for job.expiresAfter == NeverExpires || time.Since(registeredAt) < job.expiresAfter {
         select {
         case e.jobs <- job:
-            if job.ResultChannel() != nil {
-                e.exec(job, callback)
-            } else {
-                e.logger.Trace("Job %s has no result channel", job.CorrelationId())
-            }
-            return nil
-        case <-time.After(e.configuration.JobPullInterval):
-            e.logger.Trace("Waiting for free worker for job %s", job.CorrelationId())
+            e.logger.Trace("Job %s has been fired", job.userJob.CorrelationId())
+            e.processResult(job, callbacks...)
+            return
+        case <-time.After(minExpiration(e.configuration.RegistrationTimeout, job.expiresAfter)):
+            e.logger.Trace("Job %s has not been registered yet. Waiting for free worker", job.userJob.CorrelationId())
         }
     }
+    e.logger.Warn("Job %s has expired", job.userJob.CorrelationId())
+    job.result <- NewResult(job.userJob.CorrelationId(), &ExpiredError{job: job.userJob})
 }
 
-func (e *Executor) Exec(job Job) Result {
-    jobResult := make(chan Result)
-    callback := func(result Result) {
-        e.logger.Trace("Internal callback done, passing result of job %s to manager", result.CorrelationId())
-        jobResult <- result
+func (e *Executor) Fire(job Job, callbacks ...func(result Result)) error {
+    j, err := newJob(job)
+    if err != nil {
+        return err
     }
-    e.ExecWithCallback(job, callback)
+    go e.registerAndFire(j, callbacks...)
+    return nil
+}
+
+func (e *Executor) FireAndForget(job Job) error {
+    return e.Fire(job, func(result Result) {
+        // dummy callback
+    })
+}
+
+func (e *Executor) Execute(job Job) Result {
+    j, err := newJob(job)
+    if err != nil {
+        return NewResult("", err)
+    }
+    channel := make(chan Result)
+    e.registerAndFire(j, func(result Result) {
+        channel <- result
+    })
     e.logger.Trace("Waiting for result of job %s", job.CorrelationId())
-    result := <- jobResult
+    result := <-channel
     e.logger.Trace("Received result of job %s", job.CorrelationId())
     return result
 }

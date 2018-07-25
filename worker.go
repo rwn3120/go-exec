@@ -17,20 +17,22 @@ const (
 )
 
 type Worker struct {
-    uuid    string
-    jobs    chan Job
-    signals chan Signal
-    done    chan bool
-    status  Status
-    handler Handler
-    logger  *logger.Logger
+    uuid      string
+    heartbeat time.Duration
+    jobs      chan *job
+    signals   chan Signal
+    done      chan bool
+    status    Status
+    handler   Handler
+    logger    *logger.Logger
 }
 
-func createWorker(uuid string, logging *logger.Configuration, jobs chan Job, factory Factory) *Worker {
+func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configuration, jobs chan *job, factory Factory) *Worker {
     conf.Check(logging)
 
     worker := &Worker{
         uuid:    uuid,
+        heartbeat: heartbeat,
         jobs:    jobs,
         signals: make(chan Signal, 1),
         done:    make(chan bool, 1),
@@ -90,14 +92,16 @@ runLoop:
         case job, more := <-w.jobs:
             if more {
                 counter++
-                w.logger.Trace("Received job %v #%06d", job.CorrelationId(), counter)
-                w.handler.Handle(job)
+                w.logger.Trace("Received job %v #%06d", job.userJob.CorrelationId(), counter)
+                result := w.handler.Handle(job.userJob)
+                w.logger.Trace("Reporting result of job %v #%06d", job.userJob.CorrelationId(), counter)
+                job.result <- result
             } else {
                 w.logger.Trace("Received all jobs")
                 break runLoop
             }
             counter++
-        case <-time.After(w.handler.HeartBeat()):
+        case <-time.After(w.heartbeat):
             w.logger.Trace("Nothing to do")
         }
     }

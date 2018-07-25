@@ -1,8 +1,21 @@
 package exec
 
+import (
+    "time"
+    "errors"
+)
+
+const (
+    NeverExpires time.Duration = -1
+)
+
 type Job interface {
     CorrelationId() string
-    ResultChannel() *chan Result
+}
+
+type ExpiringJob interface {
+    CorrelationId() string
+    ExpiresAfter() time.Duration
 }
 
 type Result interface {
@@ -10,19 +23,39 @@ type Result interface {
     Error() error
 }
 
-type GenericResult struct {
+type job struct {
+    userJob      Job
+    expiresAfter time.Duration
+    result       chan Result
+}
+
+func newJob(userJob Job) (*job, error) {
+    if userJob == nil {
+        return nil, errors.New("job can't be nil")
+    }
+    expiresAfter := NeverExpires
+    if expiringJob, ok := userJob.(ExpiringJob); ok {
+        expiresAfter = expiringJob.ExpiresAfter()
+    }
+    return &job{
+        userJob:      userJob,
+        expiresAfter: expiresAfter,
+        result:       make(chan Result)}, nil
+}
+
+type simpleResult struct {
     id    string
     error error
 }
 
-func NewResult(id string, err error) *GenericResult {
-    return &GenericResult{id, err}
-}
-
-func (gr *GenericResult) CorrelationId() string {
+func (gr *simpleResult) CorrelationId() string {
     return gr.id
 }
 
-func (gr *GenericResult) Error() error {
+func (gr *simpleResult) Error() error {
     return gr.error
+}
+
+func NewResult(id string, err error) Result {
+    return &simpleResult{id, err}
 }
