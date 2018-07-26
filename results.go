@@ -40,7 +40,7 @@ func Nok(err error, other ...error) Result {
 
 func NewResult(errors ...error) Result {
     if len(errors) > 0 {
-        return Nok(errors[0], errors[1:])
+        return Nok(errors[0], errors[1:]...)
     } else {
         return Ok()
     }
