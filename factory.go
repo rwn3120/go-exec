@@ -1,5 +1,5 @@
 package exec
 
 type Factory interface {
-    Handler(uuid string) Handler
+    Processor(uuid string) Processor
 }

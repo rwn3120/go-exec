@@ -23,7 +23,7 @@ type Worker struct {
     signals   chan Signal
     done      chan bool
     status    Status
-    handler   Handler
+    processor Processor
     logger    *logger.Logger
 }
 
@@ -31,14 +31,14 @@ func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configurati
     conf.Check(logging)
 
     worker := &Worker{
-        uuid:    uuid,
+        uuid:      uuid,
         heartbeat: heartbeat,
-        jobs:    jobs,
-        signals: make(chan Signal, 1),
-        done:    make(chan bool, 1),
-        status:  Alive,
-        handler: factory.Handler(uuid),
-        logger:  logger.New(uuid, logging)}
+        jobs:      jobs,
+        signals:   make(chan Signal, 1),
+        done:      make(chan bool, 1),
+        status:    Alive,
+        processor: factory.Processor(uuid),
+        logger:    logger.New(uuid, logging)}
     go worker.run()
     return worker
 }
@@ -58,7 +58,7 @@ func (w *Worker) wait() bool {
 
 func (w *Worker) die() {
     if w.isAlive() {
-        defer w.handler.Destroy()
+        defer w.processor.Destroy()
         w.logger.Trace("Dying...")
         <-time.After(time.Second)
         w.status = Zombie
@@ -70,7 +70,7 @@ func (w *Worker) die() {
 
 func (w *Worker) run() {
     defer w.die()
-    if err := w.handler.Initialize(); err != nil {
+    if err := w.processor.Initialize(); err != nil {
         w.logger.Error("Could not initialize worker: %s", err.Error())
     }
 
@@ -92,10 +92,10 @@ runLoop:
         case job, more := <-w.jobs:
             if more {
                 counter++
-                w.logger.Trace("Received job %v #%06d", job.userJob.CorrelationId(), counter)
-                result := w.handler.Handle(job.userJob)
-                w.logger.Trace("Reporting result of job %v #%06d", job.userJob.CorrelationId(), counter)
-                job.result <- result
+                w.logger.Trace("Received job %v #%06d", job.correlationId, counter)
+                result := w.processor.Process(job.payload)
+                w.logger.Trace("Reporting result of job %v #%06d", job.correlationId, counter)
+                job.output <- newOutput(job.correlationId, result)
             } else {
                 w.logger.Trace("Received all jobs")
                 break runLoop

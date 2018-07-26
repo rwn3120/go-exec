@@ -5,6 +5,7 @@ import (
     "time"
     "github.com/rwn3120/go-conf"
     "github.com/rwn3120/go-logger"
+    "github.com/pkg/errors"
 )
 
 const (
@@ -122,17 +123,13 @@ func minExpiration(first time.Duration, second time.Duration) time.Duration {
 func (e *Executor) processResult(job *job, callbacks ...func(result Result)) {
     for {
         select {
-        case result := <-job.result:
-            if result.Error() == nil {
-                e.logger.Trace("Job %s done. Calling %d callbacks", result.CorrelationId(), len(callbacks))
-            } else {
-                e.logger.Warn("Job %s failed: %s. Calling %d callbacks", result.CorrelationId(), result.Error(), len(callbacks))
-            }
+        case result := <-job.output:
+            e.logger.Trace("Job %s done. Calling %d callbacks", result.correlationId, len(callbacks))
             go func() {
                 for index, callback := range callbacks {
                     if callback != nil {
                         e.logger.Trace("Running callback function (%d/%d)", index+1, len(callbacks))
-                        callback(result)
+                        callback(result.result)
                     } else {
                         e.logger.Trace("Skipping callback function (%d/%d)", index+1, len(callbacks))
                     }
@@ -140,54 +137,64 @@ func (e *Executor) processResult(job *job, callbacks ...func(result Result)) {
             }()
             return
         case <-time.After(e.configuration.CallbackHeartbeat):
-            e.logger.Trace("Waiting for result of job %s", job.userJob.CorrelationId())
+            e.logger.Trace("Waiting for output of job %s", job.correlationId)
         }
     }
 }
 
-func (e *Executor) registerAndFire(job *job, callbacks ...func(result Result)) {
-    e.logger.Trace("Registering job %s with %d callbacks", job.userJob.CorrelationId(), len(callbacks))
+func (e *Executor) fire(job *job, callbacks ...func(result Result)) {
+    e.logger.Trace("Registering job %s with %d callbacks", job.correlationId, len(callbacks))
     registeredAt := time.Now()
     for job.expiresAfter == NeverExpires || time.Since(registeredAt) < job.expiresAfter {
         select {
         case e.jobs <- job:
-            e.logger.Trace("Job %s has been fired", job.userJob.CorrelationId())
+            e.logger.Trace("Job %s has been fired", job.correlationId)
             e.processResult(job, callbacks...)
             return
         case <-time.After(minExpiration(e.configuration.RegistrationTimeout, job.expiresAfter)):
-            e.logger.Trace("Job %s has not been registered yet. Waiting for free worker", job.userJob.CorrelationId())
+            e.logger.Trace("Job %s has not been registered yet. Waiting for free worker", job.correlationId)
         }
     }
-    e.logger.Warn("Job %s has expired", job.userJob.CorrelationId())
-    job.result <- NewResult(job.userJob.CorrelationId(), &ExpiredError{job: job.userJob})
+    e.logger.Warn("Job %s has expired", job.correlationId)
+    job.output <- newOutput(job.correlationId, &Expired{})
 }
 
-func (e *Executor) Fire(job Job, callbacks ...func(result Result)) error {
-    j, err := newJob(job)
+func (e *Executor) FireJob(payload Payload, callbacks ...func(result Result)) error {
+    job, err := newJob(payload)
     if err != nil {
         return err
     }
-    go e.registerAndFire(j, callbacks...)
+    go e.fire(job, callbacks...)
     return nil
 }
 
-func (e *Executor) FireAndForget(job Job) error {
-    return e.Fire(job, func(result Result) {
+func (e *Executor) FireAndForgetJob(job Payload) error {
+    return e.FireJob(job, func(result Result) {
         // dummy callback
     })
 }
 
-func (e *Executor) Execute(job Job) Result {
-    j, err := newJob(job)
+func (e *Executor) ExecuteJob(payload Payload) (Result, error) {
+    job, err := newJob(payload)
     if err != nil {
-        return NewResult("", err)
+        return nil, err
     }
     channel := make(chan Result)
-    e.registerAndFire(j, func(result Result) {
+    e.fire(job, func(result Result) {
         channel <- result
     })
-    e.logger.Trace("Waiting for result of job %s", job.CorrelationId())
-    result := <-channel
-    e.logger.Trace("Received result of job %s", job.CorrelationId())
-    return result
+
+    for {
+        select {
+        case result, more := <-channel:
+            if more {
+                return result, nil
+            } else {
+                return nil, errors.New(fmt.Sprintf("Could not obtain result of job %s", job.correlationId))
+            }
+
+        case <-time.After(e.configuration.CallbackHeartbeat):
+            e.logger.Trace("Waiting for result of job %s", job.correlationId)
+        }
+    }
 }
