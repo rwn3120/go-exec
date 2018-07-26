@@ -29,10 +29,19 @@ func (e *Expired) Err() error {
     return errors.New("job expired")
 }
 
+func Ok() Result {
+    return &Success{}
+}
+
+func Nok(err error, other ...error) Result {
+    errors := append([]error{err}, other...)
+    return &Failed{me.New(errors...)}
+}
+
 func NewResult(errors ...error) Result {
     if len(errors) > 0 {
-        return &Failed{me.New(errors...)}
+        return Nok(errors[0], errors[1:])
     } else {
-        return &Success{}
+        return Ok()
     }
 }
