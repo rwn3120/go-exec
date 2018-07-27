@@ -37,7 +37,7 @@ func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configurati
         signals:   make(chan Signal, 1),
         done:      make(chan bool, 1),
         status:    Alive,
-        processor: factory.Processor(uuid),
+        processor: factory.Processor(),
         logger:    logger.New(uuid, logging)}
     go worker.run()
     return worker
@@ -72,6 +72,7 @@ func (w *Worker) run() {
     defer w.die()
     if err := w.processor.Initialize(); err != nil {
         w.logger.Error("Could not initialize worker: %s", err.Error())
+
     }
 
 runLoop:

@@ -9,29 +9,23 @@ import (
 )
 
 const (
-    MinimumRegistrationTimeout = 100 * time.Millisecond
-    MinimumWorkerHeartbeat     = 500 * time.Millisecond
+    MinimumHeartbeat = 100 * time.Millisecond
 )
 
 type Configuration struct {
-    WorkersCount        int
-    WorkerHeartbeat     time.Duration
-    RegistrationTimeout time.Duration
-    CallbackHeartbeat   time.Duration
-    Logger              *logger.Configuration
+    Workers   int
+    Heartbeat time.Duration
+    Logger    *logger.Configuration
 }
 
 func (c *Configuration) Validate() *[]string {
     var errorList []string
 
-    if c.WorkersCount <= 0 {
+    if c.Workers <= 0 {
         errorList = append(errorList, "Configuration: Workers count must be larger than 0")
     }
-    if c.RegistrationTimeout < MinimumRegistrationTimeout {
-        errorList = append(errorList, fmt.Sprintf("Configuration: Registration timeout must be larger or equeal to %v", MinimumRegistrationTimeout))
-    }
-    if c.WorkerHeartbeat < MinimumWorkerHeartbeat {
-        errorList = append(errorList, fmt.Sprintf("Configuration: Worker heartbeat must be larger or equeal to %v", MinimumWorkerHeartbeat))
+    if c.Heartbeat < MinimumHeartbeat {
+        errorList = append(errorList, fmt.Sprintf("Configuration: Heartbeat must be larger or equeal to %v", MinimumHeartbeat))
     }
     if errorsCount := len(errorList); errorsCount > 0 {
         return &errorList
@@ -59,17 +53,17 @@ func New(name string, configuration *Configuration, factory Factory) *Executor {
     executor := &Executor{
         name:          name,
         configuration: configuration,
-        jobs:          make(chan *job, configuration.WorkersCount),
-        workers:       make(map[string]*Worker, configuration.WorkersCount),
+        jobs:          make(chan *job, configuration.Workers),
+        workers:       make(map[string]*Worker, configuration.Workers),
         logger:        logger.New(name+"-executor", configuration.Logger)}
 
     // start workers
-    for index := 0; index < executor.configuration.WorkersCount; index++ {
+    for index := 0; index < executor.configuration.Workers; index++ {
         workerUuid := fmt.Sprintf("%s-worker-%d", name, index+1)
-        executor.logger.Trace("Creating worker %s (%d/%d)", workerUuid, index+1, configuration.WorkersCount)
+        executor.logger.Trace("Creating worker %s (%d/%d)", workerUuid, index+1, configuration.Workers)
         worker := newWorker(
             workerUuid,
-            executor.configuration.WorkerHeartbeat,
+            executor.configuration.Heartbeat,
             executor.configuration.Logger,
             executor.jobs,
             factory)
@@ -106,14 +100,13 @@ func (e *Executor) Destroy() {
     e.logger.Trace("Destroyed")
 }
 
-func minExpiration(first time.Duration, second time.Duration) time.Duration {
+func min(first time.Duration, second time.Duration) time.Duration {
     if first == NeverExpires {
         return second
     }
     if second == NeverExpires {
         return first
     }
-
     if first < second {
         return first
     }
@@ -136,23 +129,23 @@ func (e *Executor) processResult(job *job, callbacks ...func(result Result)) {
                 }
             }()
             return
-        case <-time.After(e.configuration.CallbackHeartbeat):
+        case <-time.After(e.configuration.Heartbeat):
             e.logger.Trace("Waiting for output of job %s", job.correlationId)
         }
     }
 }
 
 func (e *Executor) fire(job *job, callbacks ...func(result Result)) {
-    e.logger.Trace("Registering job %s with %d callbacks", job.correlationId, len(callbacks))
+    e.logger.Trace("Firing job %s with %d callbacks.", job.correlationId, len(callbacks))
     registeredAt := time.Now()
     for job.expiresAfter == NeverExpires || time.Since(registeredAt) < job.expiresAfter {
         select {
         case e.jobs <- job:
-            e.logger.Trace("Job %s has been fired", job.correlationId)
+            e.logger.Trace("Job %s has been fired.", job.correlationId)
             e.processResult(job, callbacks...)
             return
-        case <-time.After(minExpiration(e.configuration.RegistrationTimeout, job.expiresAfter)):
-            e.logger.Trace("Job %s has not been registered yet. Waiting for free worker", job.correlationId)
+        case <-time.After(min(e.configuration.Heartbeat, job.expiresAfter)):
+            e.logger.Trace("Job %s has not been fired yet (waiting for free worker).", job.correlationId)
         }
     }
     e.logger.Warn("Job %s has expired", job.correlationId)
@@ -170,7 +163,7 @@ func (e *Executor) FireJob(payload Payload, callbacks ...func(result Result)) er
 
 func (e *Executor) FireAndForgetJob(job Payload) error {
     return e.FireJob(job, func(result Result) {
-        // dummy callback
+        // a dummy callback
     })
 }
 
@@ -190,10 +183,10 @@ func (e *Executor) ExecuteJob(payload Payload) (Result, error) {
             if more {
                 return result, nil
             } else {
-                return nil, errors.New(fmt.Sprintf("Could not obtain result of job %s", job.correlationId))
+                return nil, errors.New(fmt.Sprintf("Could not get a result of job %s", job.correlationId))
             }
 
-        case <-time.After(e.configuration.CallbackHeartbeat):
+        case <-time.After(e.configuration.Heartbeat):
             e.logger.Trace("Waiting for result of job %s", job.correlationId)
         }
     }

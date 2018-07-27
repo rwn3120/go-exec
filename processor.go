@@ -7,3 +7,7 @@ type Processor interface {
 
     Destroy()
 }
+
+type Factory interface {
+    Processor() Processor
+}

@@ -5,6 +5,10 @@ import (
     me "github.com/rwn3120/go-multierror"
 )
 
+type Result interface {
+    Err() error
+}
+
 type Success struct{}
 
 func (s *Success) Err() error {
@@ -34,13 +38,19 @@ func Ok() Result {
 }
 
 func Nok(err error, other ...error) Result {
-    errors := append([]error{err}, other...)
-    return &Failed{me.New(errors...)}
+    allErrors := append([]error{err}, other...)
+    return &Failed{me.New(allErrors...)}
 }
 
 func NewResult(errors ...error) Result {
-    if len(errors) > 0 {
-        return Nok(errors[0], errors[1:]...)
+    filteredErrors := make([]error, len(errors))
+    for _, err := range errors {
+        if err != nil {
+            filteredErrors = append(filteredErrors, err)
+        }
+    }
+    if len(filteredErrors) > 0 {
+        return Nok(filteredErrors[0], filteredErrors[1:]...)
     } else {
         return Ok()
     }
