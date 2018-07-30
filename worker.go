@@ -16,7 +16,7 @@ const (
     KillSignal Signal = 9
 )
 
-type Worker struct {
+type worker struct {
     uuid      string
     heartbeat time.Duration
     jobs      chan *job
@@ -27,10 +27,10 @@ type Worker struct {
     logger    *logger.Logger
 }
 
-func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configuration, jobs chan *job, factory Factory) *Worker {
+func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configuration, jobs chan *job, factory ProcessorFactory) *worker {
     conf.Check(logging)
 
-    worker := &Worker{
+    worker := &worker{
         uuid:      uuid,
         heartbeat: heartbeat,
         jobs:      jobs,
@@ -43,20 +43,20 @@ func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configurati
     return worker
 }
 
-func (w *Worker) isAlive() bool {
+func (w *worker) isAlive() bool {
     return w.status == Alive
 }
 
-func (w *Worker) kill() {
+func (w *worker) kill() {
     w.logger.Trace("Sending kill signal to worker %s...", w.uuid)
     w.signals <- KillSignal
 }
 
-func (w *Worker) wait() bool {
+func (w *worker) wait() bool {
     return <-w.done
 }
 
-func (w *Worker) die() {
+func (w *worker) die() {
     if w.isAlive() {
         defer w.processor.Destroy()
         w.logger.Trace("Dying...")
@@ -68,7 +68,7 @@ func (w *Worker) die() {
     }
 }
 
-func (w *Worker) run() {
+func (w *worker) run() {
     defer w.die()
     if err := w.processor.Initialize(); err != nil {
         w.logger.Error("Could not initialize worker: %s", err.Error())

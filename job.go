@@ -5,16 +5,6 @@ import (
     "github.com/satori/go.uuid"
 )
 
-const (
-    NeverExpires time.Duration = -1
-)
-
-type Payload interface{}
-
-type ExpiringPayload interface {
-    ExpiresAfter() time.Duration
-}
-
 type output struct {
     correlationId string
     result        Result

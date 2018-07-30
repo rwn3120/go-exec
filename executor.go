@@ -8,55 +8,23 @@ import (
     "github.com/pkg/errors"
 )
 
-const (
-    MinimumHeartbeat = 100 * time.Millisecond
-)
-
-type Configuration struct {
-    Workers   int
-    Heartbeat time.Duration
-    Logger    *logger.Configuration
-}
-
-func (c *Configuration) Validate() *[]string {
-    var errorList []string
-
-    if c.Workers <= 0 {
-        errorList = append(errorList, "Configuration: Workers count must be larger than 0")
-    }
-    if c.Heartbeat < MinimumHeartbeat {
-        errorList = append(errorList, fmt.Sprintf("Configuration: Heartbeat must be larger or equeal to %v", MinimumHeartbeat))
-    }
-    if errorsCount := len(errorList); errorsCount > 0 {
-        return &errorList
-    }
-
-    otherErrors := conf.Validate(c.Logger)
-    if otherErrors != nil {
-        errorList = append(errorList, *otherErrors...)
-    }
-
-    return nil
-}
-
 type Executor struct {
     name          string
     configuration *Configuration
     jobs          chan *job
-    workers       map[string]*Worker
+    workers       map[string]*worker
     logger        *logger.Logger
 }
 
-func New(name string, configuration *Configuration, factory Factory) *Executor {
+func New(name string, configuration *Configuration, factory ProcessorFactory) *Executor {
     conf.Check(configuration)
-
+    // create executor
     executor := &Executor{
         name:          name,
         configuration: configuration,
         jobs:          make(chan *job, configuration.Workers),
-        workers:       make(map[string]*Worker, configuration.Workers),
-        logger:        logger.New(name+"-executor", configuration.Logger)}
-
+        workers:       make(map[string]*worker, configuration.Workers),
+        logger:        logger.New(name, configuration.Logger)}
     // start workers
     for index := 0; index < executor.configuration.Workers; index++ {
         workerUuid := fmt.Sprintf("%s-worker-%d", name, index+1)
@@ -75,21 +43,20 @@ func New(name string, configuration *Configuration, factory Factory) *Executor {
 
 func (e *Executor) Destroy() {
     unregisteredWorkers := make(chan string, len(e.workers))
-
     workersCount := len(e.workers)
-
-    for _, worker := range e.workers {
-        e.logger.Trace("Waiting for worker %s...", worker.uuid)
-        go func(worker *Worker) {
+    // kill workers
+    for _, w := range e.workers {
+        e.logger.Trace("Waiting for worker %s...", w.uuid)
+        go func(worker *worker) {
             e.logger.Trace("Killing worker %s...", worker.uuid)
             worker.kill()
             e.logger.Trace("Waiting for worker's %s death...", worker.uuid)
             worker.wait()
             e.logger.Trace("Unregistering worker %s (he is gone)", worker.uuid)
             unregisteredWorkers <- worker.uuid
-        }(worker)
+        }(w)
     }
-
+    // wait for all workers
     for i := 0; i < workersCount; i++ {
         unregisteredWorkerUUid := <-unregisteredWorkers
         e.logger.Trace("Worker %s unregistered", unregisteredWorkerUUid)
@@ -152,6 +119,7 @@ func (e *Executor) fire(job *job, callbacks ...func(result Result)) {
     job.output <- newOutput(job.correlationId, &Expired{})
 }
 
+// Start job execution and set its callbacks (asynchronous operation)
 func (e *Executor) FireJob(payload Payload, callbacks ...func(result Result)) error {
     job, err := newJob(payload)
     if err != nil {
@@ -161,12 +129,14 @@ func (e *Executor) FireJob(payload Payload, callbacks ...func(result Result)) er
     return nil
 }
 
+// Start job execution and forget (asynchronous operation)
 func (e *Executor) FireAndForgetJob(job Payload) error {
     return e.FireJob(job, func(result Result) {
         // a dummy callback
     })
 }
 
+// Execute job (synchronous operation)
 func (e *Executor) ExecuteJob(payload Payload) (Result, error) {
     job, err := newJob(payload)
     if err != nil {
