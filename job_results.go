@@ -3,6 +3,7 @@ package exec
 import (
     "errors"
     me "github.com/rwn3120/go-multierror"
+    "fmt"
 )
 
 type Result interface {
@@ -54,4 +55,9 @@ func NewResult(errors ...error) Result {
     } else {
         return Ok()
     }
+}
+
+func Unexpected(result Result) error {
+    err := errors.New(fmt.Sprintf("unexpected result type: %T", result))
+    return me.New(err, result.Err())
 }
