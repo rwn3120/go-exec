@@ -3,7 +3,6 @@ package exec
 import (
     "time"
     "github.com/rwn3120/go-logger"
-    "github.com/rwn3120/go-conf"
 )
 
 type Status int
@@ -27,9 +26,11 @@ type worker struct {
     logger    *logger.Logger
 }
 
-func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configuration, jobs chan *job, factory ProcessorFactory) *worker {
-    conf.Check(logging)
-
+func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configuration, jobs chan *job, factory ProcessorFactory) (*worker, error) {
+    logger, err := logger.New(uuid, logging)
+    if err != nil {
+        return nil, err
+    }
     worker := &worker{
         uuid:      uuid,
         heartbeat: heartbeat,
@@ -38,9 +39,9 @@ func newWorker(uuid string, heartbeat time.Duration, logging *logger.Configurati
         done:      make(chan bool, 1),
         status:    Alive,
         processor: factory.Processor(),
-        logger:    logger.New(uuid, logging)}
+        logger:    logger}
     go worker.run()
-    return worker
+    return worker, nil
 }
 
 func (w *worker) isAlive() bool {

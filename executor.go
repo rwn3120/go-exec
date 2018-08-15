@@ -16,29 +16,36 @@ type Executor struct {
     logger        *logger.Logger
 }
 
-func New(name string, configuration *Configuration, factory ProcessorFactory) *Executor {
+func New(name string, configuration *Configuration, factory ProcessorFactory) (*Executor, error) {
     conf.Check(configuration)
+    logger, err := logger.New(name, configuration.Logger)
+    if err != nil {
+        return nil, err
+    }
     // create executor
     executor := &Executor{
         name:          name,
         configuration: configuration,
         jobs:          make(chan *job, configuration.Workers),
         workers:       make(map[string]*worker, configuration.Workers),
-        logger:        logger.New(name, configuration.Logger)}
+        logger:        logger}
     // start workers
     for index := 0; index < executor.configuration.Workers; index++ {
         workerUuid := fmt.Sprintf("%s-worker-%d", name, index+1)
         executor.logger.Trace("Creating worker %s (%d/%d)", workerUuid, index+1, configuration.Workers)
-        worker := newWorker(
+        worker, err := newWorker(
             workerUuid,
             executor.configuration.Heartbeat,
             executor.configuration.Logger,
             executor.jobs,
             factory)
+        if err != nil {
+            return nil, err
+        }
         executor.logger.Trace("Registering worker %s", workerUuid)
         executor.workers[worker.uuid] = worker
     }
-    return executor
+    return executor, nil
 }
 
 func (e *Executor) Destroy() {

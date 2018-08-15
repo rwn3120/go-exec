@@ -5,6 +5,8 @@ import (
     "github.com/rwn3120/go-logger"
     "fmt"
     "github.com/rwn3120/go-conf"
+    me "github.com/rwn3120/go-multierror"
+    "errors"
 )
 
 const (
@@ -17,23 +19,17 @@ type Configuration struct {
     Logger    *logger.Configuration
 }
 
-func (c *Configuration) Validate() *[]string {
-    var errorList []string
+func (c *Configuration) Validate() []error {
+    multiError := me.New()
 
     if c.Workers <= 0 {
-        errorList = append(errorList, "Configuration: Workers count must be larger than 0")
+        multiError.Add(errors.New("configuration: Workers count must be larger than 0"))
     }
     if c.Heartbeat < MinimumHeartbeat {
-        errorList = append(errorList, fmt.Sprintf("Configuration: Heartbeat must be larger or equeal to %v", MinimumHeartbeat))
-    }
-    if errorsCount := len(errorList); errorsCount > 0 {
-        return &errorList
+        multiError.Add(errors.New(fmt.Sprintf("configuration: Heartbeat must be larger or equeal to %v", MinimumHeartbeat)))
     }
 
-    otherErrors := conf.Validate(c.Logger)
-    if otherErrors != nil {
-        errorList = append(errorList, *otherErrors...)
-    }
+    multiError.Add(conf.Validate(c.Logger)...)
 
-    return nil
+    return multiError.ErrorsOrNil()
 }
